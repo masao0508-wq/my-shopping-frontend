@@ -4,33 +4,25 @@ function App() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
 
+  // あなたのRenderのURL
   const API_URL = "https://shopping-app-8egl.onrender.com";
 
   const generateMenu = async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${API_URL}/generate`, { method: 'POST' });
+      // Render側の「/menu_ai」という窓口を呼ぶように修正
+      const res = await fetch(`${API_URL}/menu_ai`, { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stock: [], preference: "和食中心" }) 
+      });
       const json = await res.json();
-      setData(json);
+      // Renderの返却値に合わせて「days」というデータを取り出す
+      setData(json.days);
     } catch (e) {
       alert("エラーが発生しました。Renderが起動するまで1分ほど待ってから再度お試しください。");
     }
     setLoading(false);
-  };
-
-  const improveMenu = async () => {
-    if (!data) return;
-    try {
-      const res = await fetch(`${API_URL}/improve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ menu: data.menu })
-      });
-      const json = await res.json();
-      setData(json);
-    } catch (e) {
-      alert("改善に失敗しました。");
-    }
   };
 
   const cardStyle = {
@@ -51,30 +43,10 @@ function App() {
 
       {data && (
         <>
-          <div style={cardStyle}>
-            <div style={{ color: "#8e8e93", fontSize: "14px" }}>栄養バランス</div>
-            <div style={{ fontSize: "24px", fontWeight: "700" }}>{data.score} / 10</div>
-          </div>
-
-          {data.alerts.map((a, i) => (
-            <div key={i} style={{ background: "#ff3b30", color: "white", padding: "12px", borderRadius: "12px", marginBottom: "12px" }}>
-              ⚠️ {a.message}
-            </div>
-          ))}
-
-          {data.alerts.length > 0 && (
-            <button onClick={improveMenu} style={{
-              width: "100%", padding: "12px", borderRadius: "12px", background: "#34c759",
-              color: "white", fontWeight: "600", border: "none", marginBottom: "20px"
-            }}>
-              ワンタップで魚料理を追加
-            </button>
-          )}
-
           <h2 style={{ fontSize: "20px" }}>献立リスト</h2>
-          {data.menu.map((m, i) => (
+          {data.map((item, i) => (
             <div key={i} style={cardStyle}>
-              <strong>{["月", "火", "水", "木", "金", "土", "日"][i]}曜日: {m.name}</strong>
+              <strong>{item.day}: {item.menu}</strong>
             </div>
           ))}
         </>
