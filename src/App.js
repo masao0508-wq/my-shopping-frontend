@@ -171,5 +171,25 @@ function App() {
     </div>
   );
 }
+// App.js のステートに以下を追加
+const [volumeAdjustments, setVolumeAdjustments] = useState({}); // { 0: 2, 1: 1.5 } のような形式
 
+// adjustVolume 関数を修正
+const adjustVolume = (index, type) => {
+  const multiplier = type === 'next' ? 2 : 1.5;
+  setVolumeAdjustments(prev => ({ ...prev, [index]: multiplier }));
+  
+  const newMenu = [...data.menu];
+  if (type === 'next' && index < 6) {
+    newMenu[index + 1] = { ...newMenu[index], day: newMenu[index + 1].day };
+  }
+  setData({ ...data, menu: newMenu });
+  
+  // 分量を反映させるために自動で再計算を走らせる
+  alert("分量を計算し直します。");
+  generateMenu(false); 
+};
+
+// generateMenu 内の body に volumeAdjustments を含める
+// body: JSON.stringify({ ..., volume_adjustments: volumeAdjustments })
 export default App;
