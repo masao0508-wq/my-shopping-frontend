@@ -9,7 +9,7 @@ function App() {
 
   const API_URL = "https://shopping-app-8egl.onrender.com";
 
-  // 献立作成
+  // 1週間の献立生成
   const generateFullMenu = async () => {
     setLoading(true);
     try {
@@ -34,7 +34,7 @@ function App() {
         setBaseShoppingList(json.shopping_list || []);
         setVolumeAdjustments({});
       } else {
-        alert("データが正しく受信できませんでした。");
+        alert("有効な献立データが受信できませんでした。");
       }
     } catch (e) {
       alert("ネットワークエラー: " + e.message);
@@ -42,7 +42,7 @@ function App() {
     setLoading(false);
   };
 
-  // アプリ側での分量計算（useEffect）
+  // 分量の自動計算ロジック
   useEffect(() => {
     if (!data || !baseShoppingList || baseShoppingList.length === 0) return;
 
@@ -58,7 +58,7 @@ function App() {
     setData(prev => ({ ...prev, shopping_list: updatedList }));
   }, [volumeAdjustments, baseShoppingList]);
 
-  // ボタンスイッチ（即時反映）
+  // ボタン操作（即時反映）
   const handleVolumeChange = (dayIndex, mode) => {
     if (!data) return;
     const newMenu = [...data.menu];
@@ -78,7 +78,7 @@ function App() {
     setVolumeAdjustments(newAdjustments);
   };
 
-  // NGボタン
+  // NGボタン処理
   const handleNG = async (dayIndex, type) => {
     setLoading(true);
     const targetDish = data.menu[dayIndex][type].name;
@@ -115,7 +115,7 @@ function App() {
       {loading && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(255,255,255,0.8)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
           <div style={{ border: "4px solid #f3f3f3", borderTop: "4px solid #007AFF", borderRadius: "50%", width: "40px", height: "40px", animation: "spin 1s linear infinite" }}></div>
-          <p style={{ marginTop: "12px", color: "#007AFF", fontWeight: "bold" }}>栄養計算中...</p>
+          <p style={{ marginTop: "12px", color: "#007AFF", fontWeight: "bold" }}>Gemini 2.5が献立を生成中...</p>
         </div>
       )}
       <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
