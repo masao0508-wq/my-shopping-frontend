@@ -9,7 +9,6 @@ function App() {
 
   const API_URL = "https://shopping-app-8egl.onrender.com";
 
-  // 1週間の献立生成
   const generateFullMenu = async () => {
     setLoading(true);
     try {
@@ -17,24 +16,17 @@ function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
-          store: "ロピア", 
-          stock: [], 
-          must_use: "", 
-          use_bento: true,
-          rejected_menus: [],
-          volume_adjustments: {}
+          store: "ロピア", stock: [], must_use: "", use_bento: true,
+          rejected_menus: [], volume_adjustments: {}
         })
       });
       const json = await res.json();
-      
       if (json.error) {
         alert("AIエラー: " + json.message);
-      } else if (json && json.menu && json.menu.length > 0) {
+      } else if (json && json.menu) {
         setData(json);
         setBaseShoppingList(json.shopping_list || []);
         setVolumeAdjustments({});
-      } else {
-        alert("有効な献立データが受信できませんでした。");
       }
     } catch (e) {
       alert("ネットワークエラー: " + e.message);
@@ -42,23 +34,18 @@ function App() {
     setLoading(false);
   };
 
-  // 分量の自動計算ロジック
   useEffect(() => {
     if (!data || !baseShoppingList || baseShoppingList.length === 0) return;
-
     const totalMultiplier = Object.values(volumeAdjustments).reduce((a, b) => a + (b - 1), 1);
-
     const updatedList = baseShoppingList.map(item => ({
       ...item,
       amount: typeof item.amount === 'number' 
         ? Math.round(item.amount * totalMultiplier * 10) / 10 
         : item.amount
     }));
-
     setData(prev => ({ ...prev, shopping_list: updatedList }));
   }, [volumeAdjustments, baseShoppingList]);
 
-  // ボタン操作（即時反映）
   const handleVolumeChange = (dayIndex, mode) => {
     if (!data) return;
     const newMenu = [...data.menu];
@@ -69,8 +56,9 @@ function App() {
         newMenu[dayIndex + 1].main = { ...newMenu[dayIndex].main };
         newMenu[dayIndex + 1].type = "前日の残り";
       }
-      newAdjustments[dayIndex] = 2.0;
+      newAdjustments[dayIndex] = (newAdjustments[dayIndex] || 1.0) + 1.0;
     } else if (mode === 'lunch') {
+      newMenu[dayIndex].hasLunch = true; // 昼ごはんフラグ
       newAdjustments[dayIndex] = (newAdjustments[dayIndex] || 1.0) + 0.5;
     }
 
@@ -78,7 +66,17 @@ function App() {
     setVolumeAdjustments(newAdjustments);
   };
 
-  // NGボタン処理
+  // 買い物リストから冷蔵庫へ移動
+  const moveToStock = (index) => {
+    const item = data.shopping_list[index];
+    const newShoppingList = data.shopping_list.filter((_, i) => i !== index);
+    const newBaseList = baseShoppingList.filter((_, i) => i !== index);
+    const newStock = [...(data.stock || []), `${item.item} (${item.amount}${item.unit})`];
+
+    setBaseShoppingList(newBaseList);
+    setData({ ...data, shopping_list: newShoppingList, stock: newStock });
+  };
+
   const handleNG = async (dayIndex, type) => {
     setLoading(true);
     const targetDish = data.menu[dayIndex][type].name;
@@ -86,19 +84,12 @@ function App() {
       const res = await fetch(`${API_URL}/generate_menu`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          store: "ロピア", 
-          rejected_menus: [targetDish],
-          stock: data.stock || []
-        })
+        body: JSON.stringify({ store: "ロピア", rejected_menus: [targetDish], stock: data.stock || [] })
       });
       const json = await res.json();
-      
       if (json.error) throw new Error(json.message);
-      
       const newMenu = [...data.menu];
       newMenu[dayIndex][type] = json.menu[0][type];
-      
       setBaseShoppingList(json.shopping_list || []);
       setData(prev => ({ ...prev, menu: newMenu }));
     } catch (e) {
@@ -115,14 +106,14 @@ function App() {
       {loading && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(255,255,255,0.8)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
           <div style={{ border: "4px solid #f3f3f3", borderTop: "4px solid #007AFF", borderRadius: "50%", width: "40px", height: "40px", animation: "spin 1s linear infinite" }}></div>
-          <p style={{ marginTop: "12px", color: "#007AFF", fontWeight: "bold" }}>Gemini 2.5が献立を生成中...</p>
+          <p style={{ marginTop: "12px", color: "#007AFF", fontWeight: "bold" }}>更新中...</p>
         </div>
       )}
       <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
 
       <h1 style={{ textAlign: "center", fontSize: "22px" }}>献立くん Pro +</h1>
 
-      <button onClick={generateFullMenu} style={{ width: "100%", padding: "16px", background: "#007AFF", color: "white", border: "none", borderRadius: "14px", fontWeight: "bold", marginBottom: "20px", fontSize: "16px" }}>
+      <button onClick={generateFullMenu} style={{ width: "100%", padding: "16px", background: "#007AFF", color: "white", border: "none", borderRadius: "14px", fontWeight: "bold", marginBottom: "20px" }}>
         1週間の献立を作成
       </button>
 
@@ -133,14 +124,20 @@ function App() {
             <span>{m.type}</span>
           </div>
           <div style={{ marginTop: "10px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
               <div onClick={() => setSelectedRecipe(m.main)} style={{ cursor: "pointer", flex: 1 }}>
                 <div style={{ fontSize: "10px", color: "#007AFF" }}>主菜</div>
                 <div style={{ fontSize: "17px", fontWeight: "bold" }}>{m.main.name}</div>
               </div>
               <button onClick={() => handleNG(i, 'main')} style={ngBtnStyle}>NG</button>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginTop: "12px", paddingLeft: "10px", borderLeft: "3px solid #34c759" }}>
+            {m.hasLunch && (
+              <div style={{ marginTop: "10px", padding: "8px", background: "#f0f9ff", borderRadius: "8px", border: "1px dashed #007AFF" }}>
+                <div style={{ fontSize: "10px", color: "#007AFF" }}>🍱 昼ごはん (増量分)</div>
+                <div style={{ fontSize: "14px" }}>{m.main.name} (お弁当用)</div>
+              </div>
+            )}
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", paddingLeft: "10px", borderLeft: "3px solid #34c759" }}>
               <div onClick={() => setSelectedRecipe(m.side)} style={{ cursor: "pointer", flex: 1 }}>
                 <div style={{ fontSize: "10px", color: "#34c759" }}>副菜</div>
                 <div style={{ fontSize: "15px" }}>{m.side.name}</div>
@@ -155,10 +152,14 @@ function App() {
         </div>
       ))}
 
-      {data && data.stock && data.stock.length > 0 && (
+      {data && (
         <div style={{ ...cardStyle, border: "1px solid #34c759" }}>
           <h3 style={{ fontSize: "14px", color: "#34c759", margin: "0 0 8px 0" }}>🥦 冷蔵庫にあるもの</h3>
-          <div style={{ fontSize: "13px" }}>{data.stock.join(' / ')}</div>
+          {data.stock && data.stock.length > 0 ? (
+            <div style={{ fontSize: "13px", lineHeight: "1.6" }}>{data.stock.join(' / ')}</div>
+          ) : (
+            <div style={{ fontSize: "12px", color: "#ccc" }}>在庫なし（リストからチェックすると追加されます）</div>
+          )}
         </div>
       )}
 
@@ -167,7 +168,7 @@ function App() {
           <h3 style={{ fontSize: "18px", margin: "0 0 10px 0" }}>🛒 買い物リスト</h3>
           {data.shopping_list.map((item, idx) => (
             <div key={idx} style={{ display: "flex", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #f2f2f7" }}>
-              <input type="checkbox" style={{ width: "20px", height: "20px", marginRight: "12px" }} />
+              <input type="checkbox" onChange={() => moveToStock(idx)} style={{ width: "22px", height: "22px", marginRight: "12px" }} />
               <span style={{ fontSize: "15px" }}>{item.item} : {item.amount}{item.unit}</span>
             </div>
           ))}
