@@ -9,26 +9,33 @@ function App() {
 
   const API_URL = "https://shopping-app-8egl.onrender.com";
 
-  // 1. 初回生成
-  const generateFullMenu = async () => {
-    setLoading(true);
-    try {
-      const res = await fetch(`${API_URL}/generate_menu`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ store: "ロピア", stock: [], use_bento: true })
-      });
-      const json = await res.json();
-      if (json.error) throw new Error(json.message);
-      
-      setData(json);
-      setBaseShoppingList(json.shopping_list || []);
-      setVolumeAdjustments({});
-    } catch (e) {
-      alert("通信エラー: " + e.message);
-    }
-    setLoading(false);
-  };
+// src/App.js の generateFullMenu 関数を以下に差し替え
+const generateFullMenu = async () => {
+  setLoading(true);
+  try {
+    const res = await fetch(`${API_URL}/generate_menu`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        store: "ロピア", 
+        stock: [], 
+        must_use: "", 
+        use_bento: true,
+        rejected_menus: [],
+        volume_adjustments: {}
+      })
+    });
+    const json = await res.json();
+    if (json.error) throw new Error(json.message);
+    
+    setData(json);
+    setBaseShoppingList(json.shopping_list || []);
+    setVolumeAdjustments({});
+  } catch (e) {
+    alert("通信エラー: " + e.message);
+  }
+  setLoading(false);
+};
 
   // 2. アプリ側での分量計算（useEffectで自動更新）
   useEffect(() => {
