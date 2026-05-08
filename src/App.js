@@ -9,39 +9,43 @@ function App() {
 
   const API_URL = "https://shopping-app-8egl.onrender.com";
 
-// src/App.js の generateFullMenu 関数を以下に差し替え
-const generateFullMenu = async () => {
-  setLoading(true);
-  try {
-    const res = await fetch(`${API_URL}/generate_menu`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        store: "ロピア", 
-        stock: [], 
-        must_use: "", 
-        use_bento: true,
-        rejected_menus: [],
-        volume_adjustments: {}
-      })
-    });
-    const json = await res.json();
-    if (json.error) throw new Error(json.message);
-    
-    setData(json);
-    setBaseShoppingList(json.shopping_list || []);
-    setVolumeAdjustments({});
-  } catch (e) {
-    alert("通信エラー: " + e.message);
-  }
-  setLoading(false);
-};
+  // 献立作成
+  const generateFullMenu = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_URL}/generate_menu`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          store: "ロピア", 
+          stock: [], 
+          must_use: "", 
+          use_bento: true,
+          rejected_menus: [],
+          volume_adjustments: {}
+        })
+      });
+      const json = await res.json();
+      
+      if (json.error) {
+        alert("AIエラー: " + json.message);
+      } else if (json && json.menu && json.menu.length > 0) {
+        setData(json);
+        setBaseShoppingList(json.shopping_list || []);
+        setVolumeAdjustments({});
+      } else {
+        alert("データが正しく受信できませんでした。");
+      }
+    } catch (e) {
+      alert("ネットワークエラー: " + e.message);
+    }
+    setLoading(false);
+  };
 
-  // 2. アプリ側での分量計算（useEffectで自動更新）
+  // アプリ側での分量計算（useEffect）
   useEffect(() => {
     if (!data || !baseShoppingList || baseShoppingList.length === 0) return;
 
-    // 全体の倍率を計算（基本1倍 + 追加分）
     const totalMultiplier = Object.values(volumeAdjustments).reduce((a, b) => a + (b - 1), 1);
 
     const updatedList = baseShoppingList.map(item => ({
@@ -54,7 +58,7 @@ const generateFullMenu = async () => {
     setData(prev => ({ ...prev, shopping_list: updatedList }));
   }, [volumeAdjustments, baseShoppingList]);
 
-  // 3. ボタン操作
+  // ボタンスイッチ（即時反映）
   const handleVolumeChange = (dayIndex, mode) => {
     if (!data) return;
     const newMenu = [...data.menu];
@@ -74,7 +78,7 @@ const generateFullMenu = async () => {
     setVolumeAdjustments(newAdjustments);
   };
 
-  // 4. NGボタン（これだけはAIに新しい料理を頼む）
+  // NGボタン
   const handleNG = async (dayIndex, type) => {
     setLoading(true);
     const targetDish = data.menu[dayIndex][type].name;
@@ -82,9 +86,14 @@ const generateFullMenu = async () => {
       const res = await fetch(`${API_URL}/generate_menu`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ store: "ロピア", rejected_menus: [targetDish] })
+        body: JSON.stringify({ 
+          store: "ロピア", 
+          rejected_menus: [targetDish],
+          stock: data.stock || []
+        })
       });
       const json = await res.json();
+      
       if (json.error) throw new Error(json.message);
       
       const newMenu = [...data.menu];
@@ -93,26 +102,23 @@ const generateFullMenu = async () => {
       setBaseShoppingList(json.shopping_list || []);
       setData(prev => ({ ...prev, menu: newMenu }));
     } catch (e) {
-      alert("再計算に失敗しました");
+      alert("NG処理失敗: " + e.message);
     }
     setLoading(false);
   };
 
-  // スタイル定義
   const cardStyle = { background: "white", borderRadius: "16px", padding: "16px", marginBottom: "12px", boxShadow: "0 4px 12px rgba(0,0,0,0.05)" };
   const ngBtnStyle = { background: "#fff5f5", color: "#ff3b30", border: "none", borderRadius: "6px", padding: "4px 8px", fontSize: "11px" };
-  const spinnerStyle = { border: "4px solid #f3f3f3", borderTop: "4px solid #007AFF", borderRadius: "50%", width: "40px", height: "40px", animation: "spin 1s linear infinite" };
 
   return (
     <div style={{ background: "#f2f2f7", minHeight: "100vh", padding: "20px", fontFamily: "-apple-system, sans-serif" }}>
-      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
-      
       {loading && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(255,255,255,0.7)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
-          <div style={spinnerStyle}></div>
-          <p style={{ marginTop: "12px", color: "#007AFF", fontWeight: "bold" }}>AIが献立を構築中...</p>
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(255,255,255,0.8)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
+          <div style={{ border: "4px solid #f3f3f3", borderTop: "4px solid #007AFF", borderRadius: "50%", width: "40px", height: "40px", animation: "spin 1s linear infinite" }}></div>
+          <p style={{ marginTop: "12px", color: "#007AFF", fontWeight: "bold" }}>栄養計算中...</p>
         </div>
       )}
+      <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
 
       <h1 style={{ textAlign: "center", fontSize: "22px" }}>献立くん Pro +</h1>
 
@@ -127,32 +133,32 @@ const generateFullMenu = async () => {
             <span>{m.type}</span>
           </div>
           <div style={{ marginTop: "10px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between" }}>
-              <div onClick={() => setSelectedRecipe(m.main)} style={{ cursor: "pointer" }}>
-                <div style={{ fontSize: "11px", color: "#007AFF" }}>主菜</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start" }}>
+              <div onClick={() => setSelectedRecipe(m.main)} style={{ cursor: "pointer", flex: 1 }}>
+                <div style={{ fontSize: "10px", color: "#007AFF" }}>主菜</div>
                 <div style={{ fontSize: "17px", fontWeight: "bold" }}>{m.main.name}</div>
               </div>
               <button onClick={() => handleNG(i, 'main')} style={ngBtnStyle}>NG</button>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: "12px", paddingLeft: "10px", borderLeft: "3px solid #34c759" }}>
-              <div onClick={() => setSelectedRecipe(m.side)} style={{ cursor: "pointer" }}>
-                <div style={{ fontSize: "11px", color: "#34c759" }}>副菜</div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "start", marginTop: "12px", paddingLeft: "10px", borderLeft: "3px solid #34c759" }}>
+              <div onClick={() => setSelectedRecipe(m.side)} style={{ cursor: "pointer", flex: 1 }}>
+                <div style={{ fontSize: "10px", color: "#34c759" }}>副菜</div>
                 <div style={{ fontSize: "15px" }}>{m.side.name}</div>
               </div>
               <button onClick={() => handleNG(i, 'side')} style={ngBtnStyle}>NG</button>
             </div>
           </div>
           <div style={{ display: "flex", gap: "10px", marginTop: "18px" }}>
-            <button onClick={() => handleVolumeChange(i, 'next')} style={{ flex: 1, padding: "10px", borderRadius: "10px", border: "1px solid #007AFF", color: "#007AFF", background: "white", fontSize: "12px" }}>翌日分も作る</button>
-            <button onClick={() => handleVolumeChange(i, 'lunch')} style={{ flex: 1, padding: "10px", borderRadius: "10px", border: "1px solid #34c759", color: "#34c759", background: "white", fontSize: "12px" }}>昼ごはん追加</button>
+            <button onClick={() => handleVolumeChange(i, 'next')} style={{ flex: 1, padding: "10px", borderRadius: "10px", border: "1px solid #007AFF", color: "#007AFF", background: "white", fontSize: "11px" }}>翌日分も作る</button>
+            <button onClick={() => handleVolumeChange(i, 'lunch')} style={{ flex: 1, padding: "10px", borderRadius: "10px", border: "1px solid #34c759", color: "#34c759", background: "white", fontSize: "11px" }}>昼ごはん追加</button>
           </div>
         </div>
       ))}
 
-      {data && data.stock && (
+      {data && data.stock && data.stock.length > 0 && (
         <div style={{ ...cardStyle, border: "1px solid #34c759" }}>
-          <h3 style={{ fontSize: "14px", color: "#34c759", margin: 0 }}>🥦 冷蔵庫にあるもの</h3>
-          <div style={{ fontSize: "13px", marginTop: "8px" }}>{data.stock.join(' / ')}</div>
+          <h3 style={{ fontSize: "14px", color: "#34c759", margin: "0 0 8px 0" }}>🥦 冷蔵庫にあるもの</h3>
+          <div style={{ fontSize: "13px" }}>{data.stock.join(' / ')}</div>
         </div>
       )}
 
@@ -172,8 +178,8 @@ const generateFullMenu = async () => {
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", padding: "20px", zIndex: 10000 }} onClick={() => setSelectedRecipe(null)}>
           <div style={{ background: "white", padding: "25px", borderRadius: "24px", width: "100%", maxWidth: "450px" }} onClick={e => e.stopPropagation()}>
             <h3 style={{ marginTop: 0 }}>{selectedRecipe.name}</h3>
-            <div style={{ whiteSpace: "pre-wrap", fontSize: "15px", lineHeight: "1.7", maxHeight: "50vh", overflowY: "auto" }}>{selectedRecipe.recipe}</div>
-            <button onClick={() => setSelectedRecipe(null)} style={{ width: "100%", padding: "14px", marginTop: "20px", background: "#007AFF", color: "white", border: "none", borderRadius: "12px", fontWeight: "bold" }}>閉じる</button>
+            <div style={{ whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", maxHeight: "50vh", overflowY: "auto" }}>{selectedRecipe.recipe}</div>
+            <button onClick={() => setSelectedRecipe(null)} style={{ width: "100%", padding: "12px", marginTop: "20px", background: "#007AFF", color: "white", border: "none", borderRadius: "10px" }}>閉じる</button>
           </div>
         </div>
       )}
