@@ -13,45 +13,6 @@ const toNumber = (value) => {
 
 const normalizeName = (name) => String(name || "").trim();
 
-const parseIngredientsFromRecipe = (recipe = "") => {
-  if (typeof recipe !== "string") return [];
-
-  return recipe
-    .split("\n")
-    .map((line) => {
-      const match = line.match(/^\s*[-・]?\s*([^:：\d]+?)\s*[:：]?\s*([\d.]+)\s*([^\s、,。]*)/);
-      if (!match) return null;
-
-      const item = normalizeName(match[1]);
-      const amount = toNumber(match[2]);
-      const unit = normalizeName(match[3]);
-      if (!item || amount <= 0) return null;
-      return { item, amount, unit };
-    })
-    .filter(Boolean);
-};
-
-const normalizeIngredients = (recipeObj) => {
-  if (!recipeObj) return [];
-  const explicit = Array.isArray(recipeObj.ingredients) ? recipeObj.ingredients : [];
-  const parsed = explicit.length > 0 ? explicit : parseIngredientsFromRecipe(recipeObj.recipe);
-
-  return parsed
-    .map((ing) => ({
-      item: normalizeName(ing.item || ing.name),
-      amount: toNumber(ing.amount),
-      unit: normalizeName(ing.unit),
-    }))
-    .filter((ing) => ing.item && ing.amount > 0);
-};
-
-const getDinnerIngredients = (menuDay) => [
-  ...normalizeIngredients(menuDay?.main),
-  ...normalizeIngredients(menuDay?.side),
-];
-
-const getLunchIngredients = (menuDay) => normalizeIngredients(menuDay?.lunch);
-
 const normalizeShoppingItem = (item) => ({
   item: normalizeName(item?.item || item?.name),
   amount: roundAmount(toNumber(item?.amount)),
@@ -71,26 +32,6 @@ const mergeShoppingItems = (items) => {
   });
 
   return Array.from(map.values());
-};
-
-const applyIngredients = (shoppingList, ingredients, multiplier) => {
-  const map = new Map(
-    mergeShoppingItems(shoppingList).map((item) => [`${item.item}__${item.unit}`, item])
-  );
-
-  normalizeIngredients({ ingredients }).forEach((ing) => {
-    const key = `${ing.item}__${ing.unit}`;
-    const current = map.get(key) || { item: ing.item, amount: 0, unit: ing.unit };
-    current.amount = roundAmount(Math.max(0, current.amount + ing.amount * multiplier));
-
-    if (current.amount > 0) {
-      map.set(key, current);
-    } else {
-      map.delete(key);
-    }
-  });
-
-  return Array.from(map.values()).sort((a, b) => a.item.localeCompare(b.item, "ja"));
 };
 
 const normalizeStockItem = (item) => {
@@ -132,6 +73,7 @@ function App() {
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [loadingLabel, setLoadingLabel] = useState("Kon-Date AI 計算中...");
   const [selectedRecipe, setSelectedRecipe] = useState(null);
   const [store, setStore] = useState("ロピア");
   const [rejectedMenus, setRejectedMenus] = useState([]);
@@ -158,6 +100,7 @@ function App() {
 
   const generateFullMenu = async (currentRejected = []) => {
     setLoading(true);
+    setLoadingLabel("Kon-Date AI 献立作成中...");
     setError("");
 
     try {
@@ -201,50 +144,83 @@ function App() {
     }
   };
 
-  const handleVolumeChange = (idx, type) => {
-    setData((current) => {
-      if (!current?.menu?.[idx]) return current;
+  const recalculateShoppingList = async (nextData) => {
+    setLoading(true);
+    setLoadingLabel("Kon-Date AI 買い物リスト集計中...");
+    setError("");
 
-      const nextData = structuredClone(current);
-      const target = nextData.menu[idx];
+    try {
+      const res = await fetch(`${API_URL}/recalculate_shopping_list`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          menu: nextData.menu,
+          store: nextData.savedStore || store,
+          required_ingredients: requiredIngredients
+            .split(/[、,\n]/)
+            .map((item) => item.trim())
+            .filter(Boolean),
+        }),
+      });
 
+      const responseText = await res.text();
+      let body;
       try {
-        if (type === "next") {
-          if (idx >= nextData.menu.length - 1 || target.isNextDayMade) return current;
-
-          const originalNext = nextData.menu[idx + 1].replacedOriginal || nextData.menu[idx + 1];
-          if (originalNext.type !== "前日の残り") {
-            nextData.shopping_list = applyIngredients(nextData.shopping_list, getDinnerIngredients(originalNext), -1);
-            if (originalNext.showLunch) {
-              nextData.shopping_list = applyIngredients(nextData.shopping_list, getLunchIngredients(originalNext), -0.5);
-            }
-          }
-
-          nextData.shopping_list = applyIngredients(nextData.shopping_list, getDinnerIngredients(target), 1);
-          target.isNextDayMade = true;
-          nextData.menu[idx + 1] = {
-            ...target,
-            day: nextData.menu[idx + 1].day,
-            type: "前日の残り",
-            showLunch: false,
-            isNextDayMade: false,
-            replacedOriginal: originalNext,
-          };
-        }
-
-        if (type === "lunch") {
-          if (target.showLunch) return current;
-          target.showLunch = true;
-          nextData.shopping_list = applyIngredients(nextData.shopping_list, getLunchIngredients(target), 0.5);
-        }
-
-        saveToHistory(nextData);
-        return nextData;
-      } catch (e) {
-        setError("数量計算に失敗しました。献立表示は維持しています。");
-        return current;
+        body = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        body = responseText;
       }
-    });
+
+      if (!res.ok) {
+        const detail = typeof body === "object" ? body?.detail || body?.error : body;
+        throw new Error(detail || `API error: ${res.status}`);
+      }
+
+      const json = typeof body === "string" ? JSON.parse(body) : body;
+      const updated = normalizeEntry({ ...nextData, shopping_list: json.shopping_list || [] }, nextData.savedStore || store);
+      setData(updated);
+      saveToHistory(updated);
+    } catch (e) {
+      setData(nextData);
+      saveToHistory(nextData);
+      setError(e?.message || "買い物リストの再集計に失敗しました。献立変更は保存しています。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVolumeChange = async (idx, type) => {
+    if (!data?.menu?.[idx]) return;
+
+    const nextData = structuredClone(data);
+    const target = nextData.menu[idx];
+
+    try {
+      if (type === "next") {
+        if (idx >= nextData.menu.length - 1 || target.isNextDayMade) return;
+
+        const originalNext = nextData.menu[idx + 1].replacedOriginal || nextData.menu[idx + 1];
+        target.isNextDayMade = true;
+        nextData.menu[idx + 1] = {
+          ...target,
+          day: nextData.menu[idx + 1].day,
+          type: "前日の残り",
+          showLunch: false,
+          isNextDayMade: false,
+          replacedOriginal: originalNext,
+        };
+      }
+
+      if (type === "lunch") {
+        if (target.showLunch) return;
+        target.showLunch = true;
+      }
+
+      setData(nextData);
+      await recalculateShoppingList(nextData);
+    } catch (e) {
+      setError("献立の変更に失敗しました。");
+    }
   };
 
   const moveItem = (index, fromStock) => {
@@ -325,14 +301,19 @@ function App() {
         <div key={`${m.day}-${i}`} style={{ background: "#fff", padding: "15px", marginTop: "10px", borderRadius: "10px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", fontSize: "12px" }}>
             <span>{m.day} ({m.type})</span>
-            <button onClick={() => rejectMenu(m.main?.name)} style={{ color: "#FF3B30" }}>NG</button>
           </div>
 
-          <div onClick={() => setSelectedRecipe(m.main)} style={{ fontWeight: "bold", cursor: "pointer", textDecoration: "underline" }}>
-            主菜: {m.main?.name || "未設定"}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px" }}>
+            <div onClick={() => setSelectedRecipe(m.main)} style={{ flex: 1, fontWeight: "bold", cursor: "pointer", textDecoration: "underline" }}>
+              主菜: {m.main?.name || "未設定"}
+            </div>
+            <button onClick={() => rejectMenu(m.main?.name)} style={{ color: "#FF3B30", fontSize: "12px" }}>主菜NG</button>
           </div>
-          <div onClick={() => setSelectedRecipe(m.side)} style={{ fontSize: "14px", cursor: "pointer", color: "#666", textDecoration: "underline" }}>
-            副菜: {m.side?.name || "未設定"}
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
+            <div onClick={() => setSelectedRecipe(m.side)} style={{ flex: 1, fontSize: "14px", cursor: "pointer", color: "#666", textDecoration: "underline" }}>
+              副菜: {m.side?.name || "未設定"}
+            </div>
+            <button onClick={() => rejectMenu(m.side?.name)} style={{ color: "#FF3B30", fontSize: "12px" }}>副菜NG</button>
           </div>
           {m.showLunch && <div onClick={() => setSelectedRecipe(m.lunch)} style={{ color: "#007AFF", fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>昼: {m.lunch?.name || "未設定"}</div>}
 
@@ -382,8 +363,12 @@ function App() {
       )}
 
       {loading && (
-        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(255,255,255,0.8)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <p>Kon-Date AI 計算中...</p>
+        <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(255,255,255,0.82)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 20 }}>
+          <style>{`@keyframes konDateSpin { to { transform: rotate(360deg); } }`}</style>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "12px", color: "#333", fontWeight: "bold" }}>
+            <div style={{ width: "46px", height: "46px", border: "5px solid #ddd", borderTopColor: "#FF3B30", borderRadius: "50%", animation: "konDateSpin 0.8s linear infinite" }} />
+            <div>{loadingLabel}</div>
+          </div>
         </div>
       )}
     </div>
@@ -391,4 +376,3 @@ function App() {
 }
 
 export default App;
-
