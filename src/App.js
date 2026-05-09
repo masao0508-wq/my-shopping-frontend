@@ -1,3 +1,203 @@
+import React, { useEffect, useMemo, useState } from 'react';
+
+const API_URL = "https://shopping-app-8egl.onrender.com";
+const STORAGE_KEY = "kon_date_stable_v101";
+
+const roundAmount = (value) => Math.round(Number(value || 0) * 10) / 10;
+
+const toNumber = (value) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const parsed = Number(String(value ?? "").replace(/[^\d.]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const normalizeName = (name) => String(name || "").trim();
+
+const parseIngredientsFromRecipe = (recipe = "") => {
+  if (typeof recipe !== "string") return [];
+
+  return recipe
+    .split("\n")
+    .map((line) => {
+      const match = line.match(/^\s*[-・]?\s*([^:：\d]+?)\s*[:：]?\s*([\d.]+)\s*([^\s、,。]*)/);
+      if (!match) return null;
+
+      const item = normalizeName(match[1]);
+      const amount = toNumber(match[2]);
+      const unit = normalizeName(match[3]);
+      if (!item || amount <= 0) return null;
+      return { item, amount, unit };
+    })
+    .filter(Boolean);
+};
+
+const normalizeIngredients = (recipeObj) => {
+  if (!recipeObj) return [];
+  const explicit = Array.isArray(recipeObj.ingredients) ? recipeObj.ingredients : [];
+  const parsed = explicit.length > 0 ? explicit : parseIngredientsFromRecipe(recipeObj.recipe);
+
+  return parsed
+    .map((ing) => ({
+      item: normalizeName(ing.item || ing.name),
+      amount: toNumber(ing.amount),
+      unit: normalizeName(ing.unit),
+    }))
+    .filter((ing) => ing.item && ing.amount > 0);
+};
+
+const getDinnerIngredients = (menuDay) => [
+  ...normalizeIngredients(menuDay?.main),
+  ...normalizeIngredients(menuDay?.side),
+];
+
+const getLunchIngredients = (menuDay) => normalizeIngredients(menuDay?.lunch);
+
+const normalizeShoppingItem = (item) => ({
+  item: normalizeName(item?.item || item?.name),
+  amount: roundAmount(toNumber(item?.amount)),
+  unit: normalizeName(item?.unit),
+});
+
+const mergeShoppingItems = (items) => {
+  const map = new Map();
+
+  items.forEach((raw) => {
+    const item = normalizeShoppingItem(raw);
+    if (!item.item || item.amount <= 0) return;
+    const key = `${item.item}__${item.unit}`;
+    const current = map.get(key) || { ...item, amount: 0 };
+    current.amount = roundAmount(current.amount + item.amount);
+    map.set(key, current);
+  });
+
+  return Array.from(map.values());
+};
+
+const applyIngredients = (shoppingList, ingredients, multiplier) => {
+  const map = new Map(
+    mergeShoppingItems(shoppingList).map((item) => [`${item.item}__${item.unit}`, item])
+  );
+
+  normalizeIngredients({ ingredients }).forEach((ing) => {
+    const key = `${ing.item}__${ing.unit}`;
+    const current = map.get(key) || { item: ing.item, amount: 0, unit: ing.unit };
+    current.amount = roundAmount(Math.max(0, current.amount + ing.amount * multiplier));
+
+    if (current.amount > 0) {
+      map.set(key, current);
+    } else {
+      map.delete(key);
+    }
+  });
+
+  return Array.from(map.values()).sort((a, b) => a.item.localeCompare(b.item, "ja"));
+};
+
+const normalizeStockItem = (item) => {
+  if (typeof item === "string") {
+    const match = item.match(/^(.*?)\s*\((.*?)\)$/);
+    const amountUnit = String(match?.[2] || "");
+    const amountMatch = amountUnit.match(/^([\d.]+)\s*(.*)$/);
+    return {
+      item: normalizeName(match?.[1] || item),
+      amount: amountMatch ? toNumber(amountMatch[1]) : "",
+      unit: normalizeName(amountMatch ? amountMatch[2] : amountUnit),
+    };
+  }
+  return normalizeShoppingItem(item);
+};
+
+const normalizeEntry = (json, store) => {
+  const menu = Array.isArray(json?.menu) ? json.menu : [];
+  const shoppingList = mergeShoppingItems(Array.isArray(json?.shopping_list) ? json.shopping_list : []);
+
+  return {
+    ...json,
+    menu: menu.map((day) => ({
+      ...day,
+      main: day.main || { name: "主菜未設定", recipe: "" },
+      side: day.side || { name: "副菜未設定", recipe: "" },
+      lunch: day.lunch || { name: "昼食未設定", recipe: "" },
+    })),
+    shopping_list: shoppingList,
+    stock: Array.isArray(json?.stock) ? json.stock.map(normalizeStockItem) : [],
+    id: json?.id || Date.now(),
+    timestamp: json?.timestamp || new Date().toLocaleString(),
+    savedStore: json?.savedStore || store,
+  };
+};
+
+function App() {
+  const [data, setData] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [selectedRecipe, setSelectedRecipe] = useState(null);
+  const [store, setStore] = useState("ロピア");
+  const [rejectedMenus, setRejectedMenus] = useState([]);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) setHistory(JSON.parse(saved));
+    } catch {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+  }, []);
+
+  const saveToHistory = (newData) => {
+    if (!newData?.id) return;
+    setHistory((prev) => {
+      const updated = [newData, ...prev.filter((h) => h.id !== newData.id)].slice(0, 10);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  };
+
+  const generateFullMenu = async (currentRejected = []) => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await fetch(`${API_URL}/generate_menu`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store, rejected_menus: currentRejected }),
+      });
+
+      const responseText = await res.text();
+      let body;
+      try {
+        body = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        body = responseText;
+      }
+
+      if (!res.ok) {
+        const detail = typeof body === "object" ? body?.detail || body?.error : body;
+        throw new Error(detail || `API error: ${res.status}`);
+      }
+
+      const json = typeof body === "string" ? JSON.parse(body) : body;
+      if (json?.error) throw new Error(json.error);
+      if (!Array.isArray(json?.menu)) throw new Error("献立データの形式が不正です。");
+
+      const newEntry = normalizeEntry(json, store);
+      setData(newEntry);
+      saveToHistory(newEntry);
+    } catch (e) {
+      setError(e?.message || "データ取得に失敗しました。");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVolumeChange = (idx, type) => {
+    setData((current) => {
+      if (!current?.menu?.[idx]) return current;
+
+      const nextData = structuredClone(current);
       const target = nextData.menu[idx];
 
       try {
