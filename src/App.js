@@ -1,27 +1,24 @@
 import React, { useState, useEffect } from 'react';
 
 function App() {
-  // --- 1. 変数（State）の宣言 ---
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   const [baseShoppingList, setBaseShoppingList] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState("Kon-Date AI 計算中..."); // ★追加：状況を伝えるテキスト
   const [selectedRecipe, setSelectedRecipe] = useState(null);
   const [volumeAdjustments, setVolumeAdjustments] = useState({});
   const [store, setStore] = useState("ロピア");
 
-  // バックエンドのURL
   const API_URL = "https://shopping-app-8egl.onrender.com";
 
-  // --- 2. 初期読み込み（履歴の取得） ---
   useEffect(() => {
     document.title = "Kon-Date";
     const saved = localStorage.getItem('kon_date_v3');
     if (saved) setHistory(JSON.parse(saved));
   }, []);
 
-  // --- 3. 履歴保存処理 ---
   const saveToHistory = (newData) => {
     if (!newData || !newData.id) return;
     setHistory(prev => {
@@ -32,7 +29,6 @@ function App() {
     });
   };
 
-  // --- 4. 分量計算（翌日/昼加算の連動） ---
   useEffect(() => {
     if (!data || !baseShoppingList.length) return;
     const totalMultiplier = Object.values(volumeAdjustments).reduce((a, b) => a + (b - 1), 1);
@@ -43,18 +39,26 @@ function App() {
     setData(prev => ({ ...prev, shopping_list: updatedList }));
   }, [volumeAdjustments, baseShoppingList]);
 
-  // --- 5. AIへ献立生成をリクエストする処理（空データ対策強化版） ---
+  // ★変更：タイムアウト用のタイマーをセットし、ユーザーを不安にさせない
   const generateFullMenu = async () => {
     setLoading(true);
+    setLoadingText("Kon-Date AI 計算中...");
+
+    // 10秒経っても返事がなければ、スリープ復帰中だと判断してメッセージ変更
+    const sleepTimer = setTimeout(() => {
+      setLoadingText("Renderサーバーを起動しています（初回は最大1〜2分かかります）...");
+    }, 10000);
+
     try {
       const res = await fetch(`${API_URL}/generate_menu`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ store, stock: [], rejected_menus: [] })
       });
+      clearTimeout(sleepTimer); // 無事に返ってきたらタイマー解除
+      
       const json = await res.json();
       
-      // データが正しく生成されたかチェック
       if (json && json.menu && Array.isArray(json.menu) && json.menu.length > 0) {
         const newEntry = { 
           ...json, 
@@ -68,18 +72,19 @@ function App() {
         saveToHistory(newEntry);
       } else {
         console.error("Invalid data format:", json);
-        alert(json.message || "AIがデータを正しく生成できませんでした。もう一度作成ボタンを押してください。");
+        alert(json.message || "AIがデータを正しく生成できませんでした。もう一度お試しください。");
       }
     } catch (e) { 
+      clearTimeout(sleepTimer);
       console.error("Connection error:", e);
-      alert("サーバーとの通信に失敗しました。しばらく待ってからお試しください。"); 
+      alert("サーバーとの通信に失敗しました。時間をおいて再度お試しください。"); 
     }
     setLoading(false);
   };
 
-  // --- 6. AIとの同期（NGボタン、ボリューム変更時） ---
   const syncWithAI = async (updatedMenu, updatedAdjustments, rejected = []) => {
     setLoading(true);
+    setLoadingText("メニューを再計算しています...");
     try {
       const res = await fetch(`${API_URL}/generate_menu`, {
         method: 'POST',
@@ -119,7 +124,6 @@ function App() {
     setLoading(false);
   };
 
-  // --- 7. ボリューム変更処理（翌日・昼ごはんボタン） ---
   const handleVolumeChange = (idx, type) => {
     const newAdj = { ...volumeAdjustments };
     const newMenu = JSON.parse(JSON.stringify(data.menu));
@@ -139,7 +143,6 @@ function App() {
     syncWithAI(newMenu, newAdj);
   };
 
-  // --- 8. 在庫・買い物の移動 ---
   const moveItem = (index, fromStock) => {
     if (fromStock) {
       const itemStr = data.stock[index];
@@ -155,7 +158,6 @@ function App() {
     }
   };
 
-  // --- 9. 履歴を読み込む処理 ---
   const loadHistory = (h) => {
     setData(h);
     setBaseShoppingList(h.shopping_list || []);
@@ -164,7 +166,6 @@ function App() {
     setShowHistory(false);
   };
 
-  // --- 10. 画面描画（UI） ---
   return (
     <div style={{ background: "#f2f2f7", minHeight: "100vh", padding: "15px", fontFamily: "-apple-system, sans-serif" }}>
       <h1 style={{ textAlign: "center", color: "#FF3B30", fontWeight: "900", letterSpacing: "-1px" }}>Kon-Date</h1>
@@ -276,7 +277,7 @@ function App() {
       {loading && (
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(255,255,255,0.9)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", zIndex: 4000 }}>
           <div style={{ border: "4px solid #f3f3f3", borderTop: "4px solid #FF3B30", borderRadius: "50%", width: "40px", height: "40px", animation: "spin 1s linear infinite" }}></div>
-          <p style={{ marginTop: "15px", color: "#FF3B30", fontWeight: "bold" }}>Kon-Date AI 計算中...</p>
+          <p style={{ marginTop: "15px", color: "#FF3B30", fontWeight: "bold", textAlign: "center", padding: "0 20px" }}>{loadingText}</p>
         </div>
       )}
       <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
