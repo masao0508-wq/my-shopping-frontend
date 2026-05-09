@@ -4,11 +4,9 @@ function App() {
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
-  const [baseShoppingList, setBaseShoppingList] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingText, setLoadingText] = useState("Kon-Date AI 計算中...");
   const [selectedRecipe, setSelectedRecipe] = useState(null);
-  const [volumeAdjustments, setVolumeAdjustments] = useState({});
   const [store, setStore] = useState("ロピア");
   const [rejectedMenus, setRejectedMenus] = useState([]);
 
@@ -16,7 +14,7 @@ function App() {
 
   useEffect(() => {
     document.title = "Kon-Date";
-    const saved = localStorage.getItem('kon_date_final_v1');
+    const saved = localStorage.getItem('kon_date_final_v2');
     if (saved) setHistory(JSON.parse(saved));
   }, []);
 
@@ -24,20 +22,50 @@ function App() {
     if (!newData || !newData.id) return;
     setHistory(prev => {
       const updated = [newData, ...prev.filter(h => h.id !== newData.id)].slice(0, 10);
-      localStorage.setItem('kon_date_final_v1', JSON.stringify(updated));
+      localStorage.setItem('kon_date_final_v2', JSON.stringify(updated));
       return updated;
     });
   };
 
-  useEffect(() => {
-    if (!data || !baseShoppingList.length) return;
-    const totalMultiplier = Object.values(volumeAdjustments).reduce((a, b) => a + (b - 1), 1);
-    const updatedList = baseShoppingList.map(item => ({
-      ...item,
-      amount: typeof item.amount === 'number' ? Math.round(item.amount * totalMultiplier * 10) / 10 : item.amount
-    }));
-    setData(prev => ({ ...prev, shopping_list: updatedList }));
-  }, [volumeAdjustments, baseShoppingList, data?.id]);
+  // 買い物リストの動的再計算ロジック (減算・加算の統合)
+  const recalculateShoppingList = (menu, storeType) => {
+    const newItems = {};
+    
+    menu.forEach(day => {
+      // 倍率の決定
+      let multiplier = 1.0; 
+      if (day.type === "前日の残り") multiplier = 0; // 残り物そのものの材料は0（前日に合算）
+      if (day.isNextDayMade) multiplier += 1.0;     // 翌日分も作る場合は+1.0
+      if (day.showLunch) multiplier += 0.5;         // 昼ごはん追加は+0.5
+
+      // 材料の集計 (主菜・副菜・昼食)
+      const targetRecipes = [day.main.recipe, day.side.recipe];
+      if (day.showLunch && day.lunch) targetRecipes.push(day.lunch.recipe);
+
+      targetRecipes.forEach(recipeText => {
+        if (!recipeText || multiplier === 0) return;
+        
+        // レシピテキストから「材料名: 分量」を抽出する簡易パース
+        // ※AIが生成するJSON内のrecipeに材料リストが含まれている前提
+        const lines = recipeText.split('\n');
+        lines.forEach(line => {
+          const match = line.match(/[-・]\s*(.+?)\s*[:：]\s*([\d.]+)\s*(\w+)/);
+          if (match) {
+            const [_, name, amount, unit] = match;
+            const key = `${name}_${unit}`;
+            const val = parseFloat(amount) * multiplier;
+            newItems[key] = (newItems[key] || 0) + val;
+          }
+        });
+      });
+    });
+
+    // オブジェクトからリスト形式へ変換
+    return Object.entries(newItems).map(([key, amount]) => {
+      const [item, unit] = key.split('_');
+      return { item, amount: Math.round(amount * 10) / 10, unit };
+    });
+  };
 
   const generateFullMenu = async (currentRejected = []) => {
     setLoading(true);
@@ -52,56 +80,31 @@ function App() {
       if (json && json.menu) {
         const newEntry = { ...json, id: Date.now(), timestamp: new Date().toLocaleString('ja-JP'), savedStore: store, stock: [] };
         setData(newEntry);
-        setBaseShoppingList(json.shopping_list || []);
-        setVolumeAdjustments({});
         saveToHistory(newEntry);
       }
     } catch (e) { alert("通信エラーが発生しました。"); }
     setLoading(false);
   };
 
-  const syncWithAI = async (updatedMenu, updatedAdjustments, rejected = rejectedMenus) => {
-    setLoading(true);
-    setLoadingText("メニューを再計算中...");
-    try {
-      const res = await fetch(`${API_URL}/generate_menu`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          store,
-          stock: data?.stock || [],
-          rejected_menus: rejected,
-          current_menu_names: updatedMenu.map(m => ({ day: m.day, main: m.main.name, side: m.side.name }))
-        })
-      });
-      const json = await res.json();
-      if (json && json.menu) {
-        setBaseShoppingList(json.shopping_list || []);
-        const updatedEntry = { ...json, menu: updatedMenu, id: data.id, timestamp: data.timestamp, savedStore: store, stock: data.stock || [] };
-        setData(updatedEntry);
-        setVolumeAdjustments(updatedAdjustments);
-        saveToHistory(updatedEntry);
-      }
-    } catch (e) { alert("更新に失敗しました。"); }
-    setLoading(false);
-  };
-
   const handleVolumeChange = (idx, type) => {
-    const newAdj = { ...volumeAdjustments };
     const newMenu = JSON.parse(JSON.stringify(data.menu));
+    
     if (type === 'next') {
-        newMenu[idx].isNextDayMade = true;
-        if (idx < 6) {
-            newMenu[idx+1].main = {...newMenu[idx].main};
-            newMenu[idx+1].side = {...newMenu[idx].side};
-            newMenu[idx+1].type = "前日の残り";
-        }
-        newAdj[idx] = (newAdj[idx] || 1) + 1.0;
+      newMenu[idx].isNextDayMade = true;
+      if (idx < 6) {
+        // 翌日のメニューを「前日の残り」に書き換え（＝元の翌日メニューの材料は計算から消える）
+        newMenu[idx+1].main = { ...newMenu[idx].main };
+        newMenu[idx+1].side = { ...newMenu[idx].side };
+        newMenu[idx+1].type = "前日の残り";
+      }
     } else if (type === 'lunch') {
-        newMenu[idx].showLunch = true;
-        newAdj[idx] = (newAdj[idx] || 1) + 0.5;
+      newMenu[idx].showLunch = true;
     }
-    syncWithAI(newMenu, newAdj);
+
+    const updatedShoppingList = recalculateShoppingList(newMenu, store);
+    const updatedData = { ...data, menu: newMenu, shopping_list: updatedShoppingList };
+    setData(updatedData);
+    saveToHistory(updatedData);
   };
 
   const handleReject = (menuName) => {
@@ -116,12 +119,12 @@ function App() {
       const itemStr = newData.stock[index];
       const match = itemStr.match(/(.+) \(([\d.]+)(.+)\)/);
       const restored = match ? { item: match[1], amount: parseFloat(match[2]), unit: match[3] } : { item: itemStr, amount: 1, unit: "個" };
-      setBaseShoppingList([...baseShoppingList, restored]);
+      newData.shopping_list = [...(newData.shopping_list || []), restored];
       newData.stock = newData.stock.filter((_, i) => i !== index);
     } else {
       const item = data.shopping_list[index];
       newData.stock = [...(data.stock || []), `${item.item} (${item.amount}${item.unit})`];
-      setBaseShoppingList(baseShoppingList.filter((_, i) => i !== index));
+      newData.shopping_list = newData.shopping_list.filter((_, i) => i !== index);
     }
     setData(newData);
     saveToHistory(newData);
@@ -136,7 +139,7 @@ function App() {
       {showHistory && (
         <div style={{ background: "white", borderRadius: "12px", padding: "10px", marginBottom: "15px" }}>
           {history.map(h => (
-            <div key={h.id} onClick={() => { setData(h); setBaseShoppingList(h.shopping_list || []); setShowHistory(false); }} style={{ padding: "12px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between" }}>
+            <div key={h.id} onClick={() => { setData(h); setShowHistory(false); }} style={{ padding: "12px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between" }}>
               <span>{h.timestamp}</span><span style={{ color: "#007AFF" }}>{h.savedStore} ＞</span>
             </div>
           ))}
@@ -159,19 +162,19 @@ function App() {
             <div style={{ fontSize: "12px", color: "#8e8e93" }}>{m.day}曜日 ({m.type})</div>
             <button onClick={() => handleReject(m.main.name)} style={{ background: "none", border: "none", color: "#FF3B30", fontSize: "12px" }}>✖ NG</button>
           </div>
-          <div onClick={() => setSelectedRecipe(m.main)} style={{ fontWeight: "bold", fontSize: "16px", textDecoration: "underline", cursor: "pointer" }}>{m.main.name}</div>
-          <div onClick={() => setSelectedRecipe(m.side)} style={{ fontSize: "14px", textDecoration: "underline", cursor: "pointer", color: "#3a3a3c" }}>{m.side.name}</div>
-          {m.showLunch && <div style={{ color: "#007AFF", fontSize: "12px", marginTop: "5px" }}>🍱 昼: {m.lunch?.name}</div>}
-          <div style={{ display: "flex", gap: "8px", marginTop: "10px" }}>
-            {i < 6 && <button onClick={() => handleVolumeChange(i, 'next')} style={{ flex: 1, fontSize: "10px", padding: "6px", borderRadius: "6px", border: "1px solid #007AFF", color: "#007AFF", background: "none" }}>翌日分も作る</button>}
-            <button onClick={() => handleVolumeChange(i, 'lunch')} style={{ flex: 1, fontSize: "10px", padding: "6px", borderRadius: "6px", border: "1px solid #34c759", color: "#34c759", background: "none" }}>昼ごはん追加</button>
+          <div onClick={() => setSelectedRecipe(m.main)} style={{ fontWeight: "bold", fontSize: "16px", textDecoration: "underline", cursor: "pointer", color: "#1c1c1e" }}>{m.main.name}</div>
+          <div onClick={() => setSelectedRecipe(m.side)} style={{ fontSize: "14px", textDecoration: "underline", cursor: "pointer", color: "#3a3a3c", marginTop: "4px" }}>{m.side.name}</div>
+          {m.showLunch && <div style={{ color: "#007AFF", fontSize: "12px", marginTop: "8px", background: "#e1f5fe", padding: "5px", borderRadius: "5px" }}>🍱 昼: {m.lunch?.name}</div>}
+          <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+            {i < 6 && m.type !== "前日の残り" && <button onClick={() => handleVolumeChange(i, 'next')} style={{ flex: 1, fontSize: "10px", padding: "8px", borderRadius: "8px", border: "1px solid #007AFF", color: "#007AFF", background: "none" }}>翌日分も作る</button>}
+            <button onClick={() => handleVolumeChange(i, 'lunch')} style={{ flex: 1, fontSize: "10px", padding: "8px", borderRadius: "8px", border: "1px solid #34c759", color: "#34c759", background: "none" }}>昼ごはん追加</button>
           </div>
         </div>
       ))}
 
       {data?.stock?.length > 0 && (
         <div style={{ marginTop: "20px", background: "#e5e5ea", padding: "15px", borderRadius: "15px" }}>
-          <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>🥦 冷蔵庫の在庫（戻し機能付き）</h3>
+          <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>🥦 冷蔵庫の在庫</h3>
           {data.stock.map((item, idx) => (
             <div key={idx} style={{ display: "flex", alignItems: "center", padding: "5px 0" }}>
               <input type="checkbox" checked readOnly onClick={() => moveItem(idx, true)} />
