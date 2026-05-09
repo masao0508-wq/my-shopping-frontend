@@ -13,8 +13,7 @@ function App() {
   const API_URL = "https://shopping-app-8egl.onrender.com";
 
   useEffect(() => {
-    document.title = "Kon-Date";
-    const saved = localStorage.getItem('kon_date_final_v2');
+    const saved = localStorage.getItem('kon_date_v_perfect');
     if (saved) setHistory(JSON.parse(saved));
   }, []);
 
@@ -22,45 +21,36 @@ function App() {
     if (!newData || !newData.id) return;
     setHistory(prev => {
       const updated = [newData, ...prev.filter(h => h.id !== newData.id)].slice(0, 10);
-      localStorage.setItem('kon_date_final_v2', JSON.stringify(updated));
+      localStorage.setItem('kon_date_v_perfect', JSON.stringify(updated));
       return updated;
     });
   };
 
-  // 買い物リストの動的再計算ロジック (減算・加算の統合)
-  const recalculateShoppingList = (menu, storeType) => {
+  // 材料をパースして買い物リストを再構築する安全な関数
+  const recalculateShoppingList = (menu) => {
     const newItems = {};
-    
     menu.forEach(day => {
-      // 倍率の決定
       let multiplier = 1.0; 
-      if (day.type === "前日の残り") multiplier = 0; // 残り物そのものの材料は0（前日に合算）
-      if (day.isNextDayMade) multiplier += 1.0;     // 翌日分も作る場合は+1.0
-      if (day.showLunch) multiplier += 0.5;         // 昼ごはん追加は+0.5
+      if (day.type === "前日の残り") multiplier = 0;
+      if (day.isNextDayMade) multiplier += 1.0;
+      if (day.showLunch) multiplier += 0.5;
 
-      // 材料の集計 (主菜・副菜・昼食)
-      const targetRecipes = [day.main.recipe, day.side.recipe];
-      if (day.showLunch && day.lunch) targetRecipes.push(day.lunch.recipe);
-
-      targetRecipes.forEach(recipeText => {
-        if (!recipeText || multiplier === 0) return;
-        
-        // レシピテキストから「材料名: 分量」を抽出する簡易パース
-        // ※AIが生成するJSON内のrecipeに材料リストが含まれている前提
-        const lines = recipeText.split('\n');
+      const recipes = [day.main?.recipe, day.side?.recipe, day.showLunch ? day.lunch?.recipe : null];
+      recipes.forEach(text => {
+        if (!text || multiplier === 0) return;
+        const lines = text.split('\n');
         lines.forEach(line => {
-          const match = line.match(/[-・]\s*(.+?)\s*[:：]\s*([\d.]+)\s*(\w+)/);
+          const match = line.match(/[-・]\s*([^:：\s]+)\s*[:：\s]*([\d.]+)?\s*(\w+)?/);
           if (match) {
-            const [_, name, amount, unit] = match;
+            const name = match[1].trim();
+            const amount = match[2] ? parseFloat(match[2]) : 1;
+            const unit = match[3] || "個";
             const key = `${name}_${unit}`;
-            const val = parseFloat(amount) * multiplier;
-            newItems[key] = (newItems[key] || 0) + val;
+            newItems[key] = (newItems[key] || 0) + (amount * multiplier);
           }
         });
       });
     });
-
-    // オブジェクトからリスト形式へ変換
     return Object.entries(newItems).map(([key, amount]) => {
       const [item, unit] = key.split('_');
       return { item, amount: Math.round(amount * 10) / 10, unit };
@@ -69,7 +59,7 @@ function App() {
 
   const generateFullMenu = async (currentRejected = []) => {
     setLoading(true);
-    setLoadingText("Kon-Date AI 計算中...");
+    setData(null); // 一旦クリアして表示をリセット
     try {
       const res = await fetch(`${API_URL}/generate_menu`, {
         method: 'POST',
@@ -82,17 +72,15 @@ function App() {
         setData(newEntry);
         saveToHistory(newEntry);
       }
-    } catch (e) { alert("通信エラーが発生しました。"); }
+    } catch (e) { alert("通信エラー"); }
     setLoading(false);
   };
 
   const handleVolumeChange = (idx, type) => {
     const newMenu = JSON.parse(JSON.stringify(data.menu));
-    
     if (type === 'next') {
       newMenu[idx].isNextDayMade = true;
       if (idx < 6) {
-        // 翌日のメニューを「前日の残り」に書き換え（＝元の翌日メニューの材料は計算から消える）
         newMenu[idx+1].main = { ...newMenu[idx].main };
         newMenu[idx+1].side = { ...newMenu[idx].side };
         newMenu[idx+1].type = "前日の残り";
@@ -101,16 +89,10 @@ function App() {
       newMenu[idx].showLunch = true;
     }
 
-    const updatedShoppingList = recalculateShoppingList(newMenu, store);
-    const updatedData = { ...data, menu: newMenu, shopping_list: updatedShoppingList };
+    const newList = recalculateShoppingList(newMenu);
+    const updatedData = { ...data, menu: newMenu, shopping_list: newList };
     setData(updatedData);
     saveToHistory(updatedData);
-  };
-
-  const handleReject = (menuName) => {
-    const newRejected = [...rejectedMenus, menuName];
-    setRejectedMenus(newRejected);
-    generateFullMenu(newRejected);
   };
 
   const moveItem = (index, fromStock) => {
@@ -122,8 +104,8 @@ function App() {
       newData.shopping_list = [...(newData.shopping_list || []), restored];
       newData.stock = newData.stock.filter((_, i) => i !== index);
     } else {
-      const item = data.shopping_list[index];
-      newData.stock = [...(data.stock || []), `${item.item} (${item.amount}${item.unit})`];
+      const item = newData.shopping_list[index];
+      newData.stock = [...(newData.stock || []), `${item.item} (${item.amount}${item.unit})`];
       newData.shopping_list = newData.shopping_list.filter((_, i) => i !== index);
     }
     setData(newData);
@@ -133,14 +115,13 @@ function App() {
   return (
     <div style={{ background: "#f2f2f7", minHeight: "100vh", padding: "15px", fontFamily: "-apple-system, sans-serif" }}>
       <h1 style={{ textAlign: "center", color: "#FF3B30", fontWeight: "bold" }}>Kon-Date</h1>
-      
       <button onClick={() => setShowHistory(!showHistory)} style={{ width: "100%", padding: "10px", background: "#8e8e93", color: "white", border: "none", borderRadius: "10px", marginBottom: "10px" }}>🕒 履歴を表示</button>
 
       {showHistory && (
         <div style={{ background: "white", borderRadius: "12px", padding: "10px", marginBottom: "15px" }}>
           {history.map(h => (
             <div key={h.id} onClick={() => { setData(h); setShowHistory(false); }} style={{ padding: "12px", borderBottom: "1px solid #eee", display: "flex", justifyContent: "space-between" }}>
-              <span>{h.timestamp}</span><span style={{ color: "#007AFF" }}>{h.savedStore} ＞</span>
+              <span>{h.timestamp}</span><span>{h.savedStore}</span>
             </div>
           ))}
         </div>
@@ -154,15 +135,13 @@ function App() {
 
       <button onClick={() => generateFullMenu()} style={{ width: "100%", padding: "16px", background: "#34c759", color: "white", border: "none", borderRadius: "14px", fontWeight: "bold", fontSize: "16px" }}>1週間の献立を作成</button>
 
-      {data?.usage_tips && <div style={{ marginTop: "15px", padding: "10px", background: "#fff", borderRadius: "10px", borderLeft: "5px solid #34c759", fontSize: "13px" }}>📝 AI診断: {data.usage_tips}</div>}
-
       {data?.menu?.map((m, i) => (
         <div key={i} style={{ background: "white", borderRadius: "15px", padding: "15px", marginTop: "12px", boxShadow: "0 2px 4px rgba(0,0,0,0.05)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "5px" }}>
             <div style={{ fontSize: "12px", color: "#8e8e93" }}>{m.day}曜日 ({m.type})</div>
-            <button onClick={() => handleReject(m.main.name)} style={{ background: "none", border: "none", color: "#FF3B30", fontSize: "12px" }}>✖ NG</button>
+            <button onClick={() => { const next = [...rejectedMenus, m.main.name]; setRejectedMenus(next); generateFullMenu(next); }} style={{ background: "none", border: "none", color: "#FF3B30", fontSize: "12px" }}>✖ NG</button>
           </div>
-          <div onClick={() => setSelectedRecipe(m.main)} style={{ fontWeight: "bold", fontSize: "16px", textDecoration: "underline", cursor: "pointer", color: "#1c1c1e" }}>{m.main.name}</div>
+          <div onClick={() => setSelectedRecipe(m.main)} style={{ fontWeight: "bold", fontSize: "16px", textDecoration: "underline", cursor: "pointer" }}>{m.main.name}</div>
           <div onClick={() => setSelectedRecipe(m.side)} style={{ fontSize: "14px", textDecoration: "underline", cursor: "pointer", color: "#3a3a3c", marginTop: "4px" }}>{m.side.name}</div>
           {m.showLunch && <div style={{ color: "#007AFF", fontSize: "12px", marginTop: "8px", background: "#e1f5fe", padding: "5px", borderRadius: "5px" }}>🍱 昼: {m.lunch?.name}</div>}
           <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
@@ -174,7 +153,7 @@ function App() {
 
       {data?.stock?.length > 0 && (
         <div style={{ marginTop: "20px", background: "#e5e5ea", padding: "15px", borderRadius: "15px" }}>
-          <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>🥦 冷蔵庫の在庫</h3>
+          <h3 style={{ margin: "0 0 10px 0", fontSize: "16px" }}>🥦 冷蔵庫の在庫（戻し機能付き）</h3>
           {data.stock.map((item, idx) => (
             <div key={idx} style={{ display: "flex", alignItems: "center", padding: "5px 0" }}>
               <input type="checkbox" checked readOnly onClick={() => moveItem(idx, true)} />
@@ -200,8 +179,8 @@ function App() {
         <div style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.8)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 100 }} onClick={() => setSelectedRecipe(null)}>
           <div style={{ background: "white", padding: "20px", borderRadius: "20px", width: "85%", maxHeight: "80vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
             <h3>{selectedRecipe.name}</h3>
-            <p style={{ whiteSpace: "pre-wrap", fontSize: "14px" }}>{selectedRecipe.recipe}</p>
-            <button onClick={() => setSelectedRecipe(null)} style={{ width: "100%", padding: "12px", background: "#FF3B30", color: "white", border: "none", borderRadius: "10px", marginTop: "10px" }}>閉じる</button>
+            <p style={{ whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6" }}>{selectedRecipe.recipe}</p>
+            <button onClick={() => setSelectedRecipe(null)} style={{ width: "100%", padding: "12px", background: "#FF3B30", color: "white", border: "none", borderRadius: "10px", marginTop: "15px" }}>閉じる</button>
           </div>
         </div>
       )}
