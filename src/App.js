@@ -136,6 +136,7 @@ function App() {
   const [store, setStore] = useState("ロピア");
   const [rejectedMenus, setRejectedMenus] = useState([]);
   const [error, setError] = useState("");
+  const [requiredIngredients, setRequiredIngredients] = useState("");
 
   useEffect(() => {
     try {
@@ -163,7 +164,14 @@ function App() {
       const res = await fetch(`${API_URL}/generate_menu`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ store, rejected_menus: currentRejected }),
+        body: JSON.stringify({
+          store,
+          rejected_menus: currentRejected,
+          required_ingredients: requiredIngredients
+            .split(/[、,\n]/)
+            .map((item) => item.trim())
+            .filter(Boolean),
+        }),
       });
 
       const responseText = await res.text();
@@ -289,6 +297,17 @@ function App() {
         ))}
       </div>
 
+      <div style={{ marginBottom: "10px", background: "#fff", padding: "12px", borderRadius: "8px" }}>
+        <label style={{ display: "block", fontWeight: "bold", marginBottom: "6px" }}>必須食材</label>
+        <textarea
+          value={requiredIngredients}
+          onChange={(e) => setRequiredIngredients(e.target.value)}
+          placeholder="例: タケノコ、白菜、豚こま"
+          rows={2}
+          style={{ width: "100%", boxSizing: "border-box", padding: "8px", resize: "vertical" }}
+        />
+      </div>
+
       <button onClick={() => generateFullMenu()} disabled={loading} style={{ width: "100%", padding: "15px", background: "#34c759", color: "#fff", fontWeight: "bold" }}>
         1週間の献立を作成
       </button>
@@ -328,16 +347,18 @@ function App() {
         </div>
       ))}
 
-      {data?.stock?.length > 0 && (
-        <div style={{ marginTop: "20px", background: "#ddd", padding: "10px" }}>
-          <h4>冷蔵庫の在庫</h4>
-          {data.stock.map((item, idx) => (
+      <div style={{ marginTop: "20px", background: "#ddd", padding: "10px" }}>
+        <h4>冷蔵庫の在庫</h4>
+        {data?.stock?.length > 0 ? (
+          data.stock.map((item, idx) => (
             <label key={`${item.item}-${idx}`} style={{ display: "block", padding: "5px 0", textDecoration: "line-through" }}>
               <input type="checkbox" checked onChange={() => moveItem(idx, true)} /> {item.item}: {item.amount}{item.unit}
             </label>
-          ))}
-        </div>
-      )}
+          ))
+        ) : (
+          <div style={{ color: "#666", fontSize: "14px" }}>買い物リストでチェックした食材がここに移動します。</div>
+        )}
+      </div>
 
       {data?.shopping_list && (
         <div style={{ marginTop: "20px", background: "#fff", padding: "15px", border: "2px solid #007AFF" }}>
