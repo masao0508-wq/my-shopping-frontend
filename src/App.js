@@ -216,6 +216,19 @@ function App() {
         target.showLunch = true;
       }
 
+      if (type === "none") {
+        target.noMeal = true;
+        target.previousType = target.previousType || target.type;
+        target.type = "食事なし";
+        target.showLunch = false;
+        target.isNextDayMade = false;
+      }
+
+      if (type === "restore") {
+        target.noMeal = false;
+        target.type = target.previousType || "未分類";
+      }
+
       setData(nextData);
       await recalculateShoppingList(nextData);
     } catch (e) {
@@ -303,26 +316,38 @@ function App() {
             <span>{m.day} ({m.type})</span>
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px" }}>
-            <div onClick={() => setSelectedRecipe(m.main)} style={{ flex: 1, fontWeight: "bold", cursor: "pointer", textDecoration: "underline" }}>
-              主菜: {m.main?.name || "未設定"}
-            </div>
-            <button onClick={() => rejectMenu(m.main?.name)} style={{ color: "#FF3B30", fontSize: "12px" }}>主菜NG</button>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
-            <div onClick={() => setSelectedRecipe(m.side)} style={{ flex: 1, fontSize: "14px", cursor: "pointer", color: "#666", textDecoration: "underline" }}>
-              副菜: {m.side?.name || "未設定"}
-            </div>
-            <button onClick={() => rejectMenu(m.side?.name)} style={{ color: "#FF3B30", fontSize: "12px" }}>副菜NG</button>
-          </div>
-          {m.showLunch && <div onClick={() => setSelectedRecipe(m.lunch)} style={{ color: "#007AFF", fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>昼: {m.lunch?.name || "未設定"}</div>}
+          {m.noMeal ? (
+            <div style={{ marginTop: "8px", color: "#666", fontWeight: "bold" }}>食事なし</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "6px" }}>
+                <div onClick={() => setSelectedRecipe(m.main)} style={{ flex: 1, fontWeight: "bold", cursor: "pointer", textDecoration: "underline" }}>
+                  主菜: {m.main?.name || "未設定"}
+                </div>
+                <button onClick={() => rejectMenu(m.main?.name)} style={{ color: "#FF3B30", fontSize: "12px" }}>主菜NG</button>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px", marginTop: "4px" }}>
+                <div onClick={() => setSelectedRecipe(m.side)} style={{ flex: 1, fontSize: "14px", cursor: "pointer", color: "#666", textDecoration: "underline" }}>
+                  副菜: {m.side?.name || "未設定"}
+                </div>
+                <button onClick={() => rejectMenu(m.side?.name)} style={{ color: "#FF3B30", fontSize: "12px" }}>副菜NG</button>
+              </div>
+              {m.showLunch && <div onClick={() => setSelectedRecipe(m.lunch)} style={{ color: "#007AFF", fontSize: "12px", cursor: "pointer", textDecoration: "underline" }}>昼: {m.lunch?.name || "未設定"}</div>}
+            </>
+          )}
 
           <div style={{ display: "flex", gap: "5px", marginTop: "10px" }}>
-            {i < 6 && m.type !== "前日の残り" && !m.isNextDayMade && (
+            {i < 6 && m.type !== "前日の残り" && !m.isNextDayMade && !m.noMeal && (
               <button onClick={() => handleVolumeChange(i, "next")} style={{ flex: 1, fontSize: "11px" }}>翌日分も作る</button>
             )}
-            {!m.showLunch && (
+            {!m.showLunch && !m.noMeal && (
               <button onClick={() => handleVolumeChange(i, "lunch")} style={{ flex: 1, fontSize: "11px" }}>昼ごはん追加</button>
+            )}
+            {!m.noMeal && (
+              <button onClick={() => handleVolumeChange(i, "none")} style={{ flex: 1, fontSize: "11px" }}>食事なし</button>
+            )}
+            {m.noMeal && (
+              <button onClick={() => handleVolumeChange(i, "restore")} style={{ flex: 1, fontSize: "11px" }}>食事ありに戻す</button>
             )}
           </div>
         </div>
